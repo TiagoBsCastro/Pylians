@@ -7,8 +7,8 @@ import Pk_library as PKL
 import sys,os
 
 ########### routines ############
-# Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus)
-# Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus)
+# Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,unit)
+# Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,unit)
 #################################
 
 
@@ -31,12 +31,14 @@ name_dict = {'0' :'GAS',  '01':'GCDM',  '02':'GNU',    '04':'Gstars',
 # axis ---------------------> axis along which move particles in redshift-space
 # cpus ---------------------> Number of cpus to compute power spectra 
 # folder_out ---------------> directory where to save the output
-def Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,folder_out):
+# unit ---------------------> distance unit in Mpc/h
+# bootstrap ----------------> Compute bootstrapping errors for Pk3D (default False)
+def Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,folder_out,unit=1.0,bootstrap=False):
 
     # read relevant paramaters on the header
     print 'Computing power spectrum...'
     head     = readsnap.snapshot_header(snapshot_fname)
-    BoxSize  = head.boxsize/1e3 #Mpc/h
+    BoxSize  = head.boxsize*unit/1e3 #Mpc/h
     Masses   = head.massarr*1e10 #Msun/h
     Nall     = head.nall;  Ntotal = np.sum(Nall,dtype=np.int64)
     Omega_m  = head.omega_m
@@ -44,14 +46,14 @@ def Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,folder_out):
     redshift = head.redshift
     Hubble   = 100.0*np.sqrt(Omega_m*(1.0+redshift)**3+Omega_l)  #km/s/(Mpc/h)
     z        = '%.3f'%redshift
-        
+
     # find output file name
     fout = folder_out+'/Pk_' + name_dict[str(ptype)]
     if do_RSD:  fout += ('_RS_axis=' + str(axis) + '_z=' + z + '.dat')
     else:       fout +=                           ('_z=' + z + '.dat')
 
     # read the positions of the particles
-    pos = readsnap.read_block(snapshot_fname,"POS ",parttype=ptype)/1e3 #Mpc/h
+    pos = readsnap.read_block(snapshot_fname,"POS ",parttype=ptype)*unit/1e3 #Mpc/h
     print '%.3f < X [Mpc/h] < %.3f'%(np.min(pos[:,0]),np.max(pos[:,0]))
     print '%.3f < Y [Mpc/h] < %.3f'%(np.min(pos[:,1]),np.max(pos[:,1]))
     print '%.3f < Z [Mpc/h] < %.3f\n'%(np.min(pos[:,2]),np.max(pos[:,2]))
@@ -76,19 +78,22 @@ def Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,folder_out):
                 offset += Nall[ptype]
         else:
             M = readsnap.read_block(snapshot_fname,"MASS",parttype=-1)*1e10
-        
+
         mean = np.sum(M,dtype=np.float64)/dims**3
         MASL.MA(pos,delta,BoxSize,'CIC',M); del pos,M
 
-    else:  
+    else:
         mean = len(pos)*1.0/dims**3
         MASL.MA(pos,delta,BoxSize,'CIC'); del pos
 
     # compute the P(k) and save results to file
     delta /= mean;  delta -= 1.0
-    Pk = PKL.Pk(delta,BoxSize,axis=axis,MAS='CIC',threads=cpus);  del delta
-    np.savetxt(fout,np.transpose([Pk.k3D, Pk.Pk[:,0], Pk.Pk[:,1], Pk.Pk[:,2],
-                                  Pk.Nmodes3D]))
+    Pk = PKL.Pk(delta,BoxSize,axis=axis,MAS='CIC',threads=cpus,bootstrap=bootstrap);
+    del delta
+    if bootstrap:
+        np.savetxt(fout,np.transpose([Pk.k3D, Pk.Pk[:,0], Pk.Pk[:,1], Pk.Pk[:,2], Pk.Nmodes3D, Pk.bootstrap_errors]))
+    else:
+        np.savetxt(fout,np.transpose([Pk.k3D, Pk.Pk[:,0], Pk.Pk[:,1], Pk.Pk[:,2], Pk.Nmodes3D]))
 ###############################################################################
 
 ###############################################################################
@@ -104,8 +109,9 @@ def Pk_comp(snapshot_fname,ptype,dims,do_RSD,axis,cpus,folder_out):
 # axis ---------------------> axis along which move particles in redshift-space
 # cpus ---------------------> Number of cpus to compute power spectra
 # folder_out ---------------> folder where to put outputs
-def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
-              folder_out=None):
+# bootstrap ----------------> Compute bootstrapping errors for Pk3D (default False)
+def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,unit=1.0,
+              folder_out=None,bootstrap=False):
 
     # find folder to place output files. Default is current directory
     if folder_out is None:  folder_out = os.getcwd()
@@ -113,13 +119,13 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
     # for either one single species or all species use this routine
     if len(particle_type)==1:
         Pk_comp(snapshot_fname,particle_type[0],dims,do_RSD,
-                axis,cpus,folder_out)
+                axis,cpus,folder_out,unit=unit,bootstrap=bootstrap)
         return None
 
     # read snapshot head and obtain BoxSize, Omega_m and Omega_L
     print '\nREADING SNAPSHOTS PROPERTIES'
     head     = readsnap.snapshot_header(snapshot_fname)
-    BoxSize  = head.boxsize/1e3  #Mpc/h
+    BoxSize  = head.boxsize*unit/1e3  #Mpc/h
     Nall     = head.nall
     Masses   = head.massarr*1e10 #Msun/h
     Omega_m  = head.omega_m
@@ -135,10 +141,10 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
     Omega_n = Masses[2]*Nall[2]/BoxSize**3/rho_crit
     Omega_g, Omega_s = 0.0, 0.0
     if Nall[0]>0:
-        if Masses[0]>0:  
+        if Masses[0]>0:
             Omega_g = Masses[0]*Nall[0]/BoxSize**3/rho_crit
             Omega_s = Masses[4]*Nall[4]/BoxSize**3/rho_crit
-        else:    
+        else:
             # mass in Msun/h
             mass = readsnap.read_block(snapshot_fname,"MASS",parttype=0)*1e10 
             Omega_g = np.sum(mass,dtype=np.float64)/BoxSize**3/rho_crit
@@ -163,7 +169,7 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
 
     # dictionary among particle type and the index in the delta and Pk arrays
     # delta of stars (ptype=4) is delta[3] not delta[4]
-    index_dict = {0:0, 1:1, 2:2, 4:3} 
+    index_dict = {0:0, 1:1, 2:2, 4:3}
 
     # define suffix here
     if do_RSD:  suffix = '_RS_axis=' + str(axis) + '_z=' + z + '.dat'
@@ -172,9 +178,9 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
 
     # do a loop over all particle types and compute the deltas
     for ptype in particle_type:
-    
+
         # read particle positions in #Mpc/h
-        pos = readsnap.read_block(snapshot_fname,"POS ",parttype=ptype)/1e3 
+        pos = readsnap.read_block(snapshot_fname,"POS ",parttype=ptype)*unit/1e3
 
         # move particle positions to redshift-space
         if do_RSD:
@@ -218,7 +224,7 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
             # This routine computes the auto- and cross-power spectra
             data = PKL.XPk([delta[index1],delta[index2]],BoxSize,axis=axis,
                            MAS=['CIC','CIC'],threads=cpus)
-                                                        
+
             k = data.k3D;   Nmodes = data.Nmodes3D
 
             # save power spectra results in the output files
@@ -254,7 +260,7 @@ def Pk_Gadget(snapshot_fname,dims,particle_type,do_RSD,axis,cpus,
         fout += name_dict[str(ptype)] + '+'
 
     delta_tot /= Omega_tot;  del delta;  fout = fout[:-1] #avoid '+' in the end
-    
+
     # compute power spectrum
     data = PKL.Pk(delta_tot,BoxSize,axis=axis,MAS='CIC',
                   threads=cpus);  del delta_tot

@@ -1,5 +1,8 @@
 # Pylians
 
+Development branch to add Bootstrapping error to Power-Spectrum 
+computation.
+
 Pylians stands for **Py**thon **li**braries for the **a**nalysis of **n**umerical **s**imulations. They are a set of python libraries, written in python, cython and C, whose purposes is to facilitate the analysis of numerical simulations (both N-body and hydro). Among other things, they can be used to:
 
 - Compute density fields
